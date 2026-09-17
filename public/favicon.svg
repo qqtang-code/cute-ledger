@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFB3C6"/>
+      <stop offset="100%" stop-color="#FF8FA9"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+  <!-- 小本子 -->
+  <rect x="128" y="132" width="256" height="248" rx="36" fill="#FFF6F8"/>
+  <rect x="128" y="132" width="56" height="248" rx="28" fill="#FFE3EA"/>
+  <circle cx="196" cy="196" r="16" fill="#FFD36E"/>
+  <rect x="236" y="186" width="120" height="20" rx="10" fill="#FFC9D8"/>
+  <rect x="196" y="248" width="160" height="20" rx="10" fill="#FFDCE5"/>
+  <rect x="196" y="292" width="112" height="20" rx="10" fill="#FFDCE5"/>
+  <!-- 爱心 -->
+  <path d="M256 352c-6-10-40-26-40-48 0-14 11-24 24-24 8 0 14 4 16 10 2-6 8-10 16-10 13 0 24 10 24 24 0 22-34 38-40 48z" fill="#FF8FA9"/>
+</svg>

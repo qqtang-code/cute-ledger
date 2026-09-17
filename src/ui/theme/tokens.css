@@ -1,0 +1,117 @@
+/* 设计令牌：颜色 / 圆角 / 阴影 / 间距 / 时长 —— 全站只从这里取值，别在组件里写死颜色 */
+:root {
+  /* 圆角：可爱风的关键，全是圆润的 */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  /* 间距 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* 字号：正文 16px 起步（iOS 下输入框小于 16px 会触发自动缩放） */
+  --fs-xs: 12px;
+  --fs-sm: 14px;
+  --fs-base: 16px;
+  --fs-lg: 20px;
+  --fs-xl: 26px;
+  --fs-2xl: 34px;
+
+  /* 手机端可点区域下限 */
+  --tap-min: 44px;
+  --nav-h: 62px;
+
+  /* 动效（SPEC R12：≤200ms，reduced-motion 时归零） */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --ease-soft: cubic-bezier(0.22, 0.9, 0.3, 1);
+
+  --shadow-soft: 0 4px 16px rgba(255, 155, 179, 0.18);
+  --shadow-card: 0 2px 10px rgba(74, 59, 65, 0.06);
+
+  /* 语义色 */
+  --c-ok: #6fc99a;
+  --c-warn: #f0b428;
+  --c-danger: #ff6b81;
+}
+
+/* 主题一：奶油草莓（默认） */
+:root,
+[data-theme='strawberry'] {
+  --c-bg: #fff6f8;
+  --c-surface: #ffffff;
+  --c-surface-2: #fff0f4;
+  --c-text: #4a3b41;
+  --c-text-dim: #9a8790;
+  --c-primary: #ff9bb3;
+  --c-primary-ink: #ffffff;
+  --c-primary-soft: #ffe3ea;
+  --c-accent: #ffd36e;
+  --c-border: #f4dce3;
+}
+
+/* 主题二：薄荷苏打 */
+[data-theme='mint'] {
+  --c-bg: #f2fbf7;
+  --c-surface: #ffffff;
+  --c-surface-2: #e8f7f0;
+  --c-text: #33463f;
+  --c-text-dim: #849a92;
+  --c-primary: #6fd0aa;
+  --c-primary-ink: #ffffff;
+  --c-primary-soft: #d8f4e8;
+  --c-accent: #ffd36e;
+  --c-border: #d5ece2;
+}
+
+/* 主题三：葡萄苏打 */
+[data-theme='grape'] {
+  --c-bg: #f7f4ff;
+  --c-surface: #ffffff;
+  --c-surface-2: #efeaff;
+  --c-text: #423c57;
+  --c-text-dim: #8a82a3;
+  --c-primary: #a99bff;
+  --c-primary-ink: #ffffff;
+  --c-primary-soft: #e6e0ff;
+  --c-accent: #ffd36e;
+  --c-border: #e0d8f5;
+}
+
+/* 深色模式：三套主题共用一套暗面，只换主色 */
+[data-mode='dark'] {
+  --c-bg: #1c1a21;
+  --c-surface: #26232c;
+  --c-surface-2: #302c38;
+  --c-text: #f2eef4;
+  --c-text-dim: #a79fb2;
+  --c-border: #3b3644;
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+[data-mode='dark'][data-theme='strawberry'] {
+  --c-primary: #ff8fa9;
+  --c-primary-soft: #43303a;
+}
+[data-mode='dark'][data-theme='mint'] {
+  --c-primary: #5fc39c;
+  --c-primary-soft: #2b3d37;
+}
+[data-mode='dark'][data-theme='grape'] {
+  --c-primary: #9a8bff;
+  --c-primary-soft: #332d47;
+}
+
+/* 系统偏好：跟随（默认），用户显式选 light/dark 时由 data-mode 覆盖 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+  }
+}
