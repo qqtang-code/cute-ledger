@@ -6,6 +6,7 @@ import { attachmentService, backupService, repository, useLedgerStore } from '..
 import { useUiStore } from '../../../store/ui'
 import type { BackupPreview } from '../../../services/backup'
 import { CategoryManager } from '../categories/CategoryManager'
+import { SyncPanel } from './SyncPanel'
 
 const THEMES: Array<{ key: ThemeName; label: string; emoji: string }> = [
   { key: 'strawberry', label: '奶油草莓', emoji: '🍓' },
@@ -207,6 +208,8 @@ export function SettingsPage() {
           </div>
         </div>
       </div>
+
+      <SyncPanel />
 
       <CategoryManager />
 

@@ -48,6 +48,27 @@ describe('备份导出', () => {
   })
 })
 
+describe('密钥不进备份（安全）', () => {
+  test('同步 token 存在 meta 里，导出的 zip 里一个字都找不到', async () => {
+    const { adapter, service } = await seeded()
+    await adapter.setMeta('syncToken', 'github_pat_SUPER_SECRET_VALUE')
+
+    const zip = await service.exportZip()
+    const { unzip } = await import('fflate')
+    const buffer = new Uint8Array(await zip.arrayBuffer())
+    const files = await new Promise<Record<string, Uint8Array>>((resolve, reject) => {
+      unzip(buffer, (error, result) => (error ? reject(error) : resolve(result)))
+    })
+
+    for (const [name, bytes] of Object.entries(files)) {
+      const text = new TextDecoder().decode(bytes)
+      expect(text, `${name} 里不该出现 token`).not.toContain('SUPER_SECRET_VALUE')
+    }
+    // 但 token 本身还好好存在本机
+    expect(await adapter.getMeta('syncToken')).toBe('github_pat_SUPER_SECRET_VALUE')
+  })
+})
+
 describe('备份导入', () => {
   test('导出的 zip 能原样导回去：流水、附件、备注都还在', async () => {
     const source = await seeded()

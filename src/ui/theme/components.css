@@ -719,3 +719,35 @@
     animation: none;
   }
 }
+
+/* 跨设备同步 */
+.sync-help {
+  margin-top: var(--space-3);
+  font-size: var(--fs-sm);
+}
+.sync-help summary {
+  cursor: pointer;
+  min-height: var(--tap-min);
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+  color: var(--c-text-dim);
+}
+.sync-help__steps {
+  margin: var(--space-2) 0;
+  padding-left: 1.2em;
+  list-style: decimal;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.sync-help code {
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-2);
+  font-size: var(--fs-xs);
+  word-break: break-all;
+}
+.sync-status--error {
+  color: var(--c-danger);
+}

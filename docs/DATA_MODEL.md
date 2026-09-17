@@ -1,6 +1,7 @@
 # 数据模型
 
-IndexedDB 库名 `cute-ledger`，当前版本 `DB_VERSION = 1`（见 `src/data/migrations.ts`）。
+IndexedDB 库名 `cute-ledger`，当前版本 `DB_VERSION = 2`（见 `src/data/migrations.ts`）。
+v1 → v2 只做了一件事：给分类补 `updatedAt`（跨设备同步要判断「谁最后改的」）。
 
 ## 表
 
@@ -49,7 +50,14 @@ IndexedDB 库名 `cute-ledger`，当前版本 `DB_VERSION = 1`（见 `src/data/m
 
 ### settings（设置，单条记录，key = `app`）
 
-`currencySymbol` / `theme` / `mode` / `weekStart` / `monthlyBudgetCents` / `lastBackupAt` / `persisted`
+**跨设备共享的**：`currencySymbol` / `theme` / `mode` / `weekStart` / `monthlyBudgetCents` / `updatedAt`
+**每台设备自己的**（不参与同步，也不会推到云端）：`lastBackupAt` / `persisted` / `syncRepo` / `syncBranch` / `syncEnabled` / `lastSyncAt`
+
+### meta（杂项键值）
+
+- `schemaVersion`：表结构版本
+- `syncTombstones`：删除墓碑 `{ id: 删除时间 }`，同步用，90 天后自动清理
+- `syncToken`：数据仓库的 token。**故意放在这里**——`dump()` 不读 meta，所以导出备份 zip 时不会把密钥带出去
 
 ### meta（元信息）
 
@@ -67,6 +75,19 @@ IndexedDB 库名 `cute-ledger`，当前版本 `DB_VERSION = 1`（见 `src/data/m
 
 `settings` 读取时用 `{...DEFAULT_SETTINGS, ...存储值}` 合并，所以以后给设置加字段，
 老数据读出来会自动补默认值，不需要迁移。
+
+## 同步用的远端格式（私有数据仓库里）
+
+```
+state.json              整份元数据快照：
+                        { schemaVersion, generatedAt, expenses[], categories[],
+                          attachments[](不含二进制), settings(只含共享字段), tombstones{} }
+media/<附件id>.<后缀>    附件二进制本体
+```
+
+推送用 Git Data API 一次提交搞定（blob → tree → commit → 更新 ref），删除文件靠 tree 里 `sha: null`。
+空仓库有坑：首个提交必须走 Contents API，否则 Git Data API 一律 409 Git Repository is empty
+（`scripts/sync-probe.mjs` 实测确认，`src/services/sync/github.test.ts` 把这条固化成回归测试）。
 
 ## 备份格式（导出 zip）
 

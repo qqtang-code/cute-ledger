@@ -3,7 +3,15 @@ import { emptyFiltersValue } from '../../domain/filters'
 import type { Settings } from '../../domain/types'
 import { makeAttachment, makeCategory, makeExpense, makeSettings } from '../../test/factories'
 import { closeAllAdapters, freshAdapter, newAdapter } from '../../test/idb'
-import { DEFAULT_CATEGORIES, DB_VERSION } from '../migrations'
+import {
+  DEFAULT_CATEGORIES,
+  DB_VERSION,
+  STORE_CATEGORIES,
+  migrations,
+  type MigrationDb,
+  type MigrationTx,
+} from '../migrations'
+import { resetDatabase } from '../../test/idb'
 import type { IndexedDbAdapter } from './indexeddb'
 
 let adapter: IndexedDbAdapter
@@ -31,6 +39,54 @@ describe('建库与默认数据', () => {
     const second = newAdapter()
     await second.init()
     expect(await second.listCategories()).toHaveLength(DEFAULT_CATEGORIES.length + 1)
+  })
+})
+
+describe('老版本数据升级（v1 → v2）', () => {
+  test('v1 的老数据能被 v2 迁移升上来：分类补上 updatedAt，流水一条不少', async () => {
+    await resetDatabase()
+
+    // 手工造一个 v1 的库：跑 v1 的建表函数，再塞一条「没有 updatedAt」的老分类和一笔老流水
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open('cute-ledger', 1)
+      request.onupgradeneeded = () => {
+        const rawDb = request.result
+        const rawTx = request.transaction
+        if (!rawTx) throw new Error('没有 versionchange 事务')
+        migrations[1](rawDb as unknown as MigrationDb, rawTx as unknown as MigrationTx)
+        rawTx.objectStore(STORE_CATEGORIES).put({
+          id: 'cat-legacy',
+          name: '老分类',
+          emoji: '🍜',
+          color: '#FF9BB3',
+          order: 99,
+          archived: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        })
+      }
+      request.onsuccess = () => {
+        request.result.close()
+        resolve()
+      }
+      request.onerror = () => reject(request.error)
+    })
+
+    // 用适配器打开（会跑 v2 迁移）
+    const upgraded = newAdapter()
+    await upgraded.init()
+
+    expect(await upgraded.schemaVersion()).toBe(2)
+
+    const legacy = (await upgraded.listCategories()).find((c) => c.id === 'cat-legacy')
+    expect(legacy).toBeDefined()
+    expect(legacy?.name).toBe('老分类')
+    // 关键：老记录补上了 updatedAt（等于从没改过 → 用 createdAt）
+    expect(legacy?.updatedAt).toBe('2026-01-01T00:00:00.000Z')
+
+    // 内置分类也都补上了
+    const builtin = (await upgraded.listCategories()).filter((c) => c.id.startsWith('cat-') && c.id !== 'cat-legacy')
+    expect(builtin).toHaveLength(DEFAULT_CATEGORIES.length)
+    expect(builtin.every((c) => typeof c.updatedAt === 'string' && c.updatedAt.length > 0)).toBe(true)
   })
 })
 

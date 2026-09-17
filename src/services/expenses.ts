@@ -1,9 +1,33 @@
 import { validateAmountCents } from '../domain/money'
 import { normalizeTags } from '../domain/media'
-import type { Attachment, DateString, Expense, Id } from '../domain/types'
+import { TOMBSTONES_META_KEY } from '../domain/sync'
+import type { Attachment, DateString, Expense, Id, IsoString } from '../domain/types'
 import type { StorageAdapter } from '../data/ports'
 import type { PendingAttachment } from './attachments'
 import { newId } from './ids'
+
+async function readTombstones(adapter: StorageAdapter): Promise<Record<Id, IsoString>> {
+  return (await adapter.getMeta<Record<Id, IsoString>>(TOMBSTONES_META_KEY)) ?? {}
+}
+
+/** 删除时留墓碑，多设备同步靠它把「删除」也同步过去（否则另一台会把旧记录再推回来） */
+async function markDeleted(adapter: StorageAdapter, ids: Id[], at: IsoString): Promise<void> {
+  const tombstones = await readTombstones(adapter)
+  for (const id of ids) tombstones[id] = at
+  await adapter.setMeta(TOMBSTONES_META_KEY, tombstones)
+}
+
+async function clearDeleted(adapter: StorageAdapter, ids: Id[]): Promise<void> {
+  const tombstones = await readTombstones(adapter)
+  let changed = false
+  for (const id of ids) {
+    if (tombstones[id]) {
+      delete tombstones[id]
+      changed = true
+    }
+  }
+  if (changed) await adapter.setMeta(TOMBSTONES_META_KEY, tombstones)
+}
 
 export interface ExpenseInput {
   amountCents: number
@@ -104,6 +128,8 @@ export function createExpenseService(adapter: StorageAdapter, attachmentsFor: (p
       if (!expense) throw new Error('这笔流水已经不存在了')
       const attachments = await adapter.listAttachments(id)
       await adapter.deleteExpense(id)
+      // 流水和它的附件一起立墓碑
+      await markDeleted(adapter, [id, ...attachments.map((a) => a.id)], new Date().toISOString())
       return { expense, attachments }
     },
 
@@ -112,6 +138,8 @@ export function createExpenseService(adapter: StorageAdapter, attachmentsFor: (p
         await adapter.saveAttachment(attachment)
       }
       await adapter.saveExpense(snapshot.expense)
+      // 撤销删除＝撤销墓碑，否则下次同步会被当成「已删除」再删一遍
+      await clearDeleted(adapter, [snapshot.expense.id, ...snapshot.attachments.map((a) => a.id)])
     },
 
     async attachmentIdsOf(id) {

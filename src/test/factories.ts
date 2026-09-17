@@ -43,6 +43,7 @@ export function makeCategory(over: Partial<Category> = {}): Category {
     order: over.order ?? seq,
     archived: over.archived ?? false,
     createdAt: over.createdAt ?? '2026-09-17T10:00:00.000Z',
+    updatedAt: over.updatedAt ?? over.createdAt ?? '2026-09-17T10:00:00.000Z',
   }
 }
 
@@ -54,5 +55,10 @@ export const makeSettings = (over: Partial<Settings> = {}): Settings => ({
   monthlyBudgetCents: 0,
   lastBackupAt: null,
   persisted: false,
+  updatedAt: '2026-09-17T10:00:00.000Z',
+  syncRepo: '',
+  syncBranch: 'main',
+  syncEnabled: false,
+  lastSyncAt: null,
   ...over,
 })

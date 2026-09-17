@@ -5,8 +5,9 @@ export const DB_NAME = 'cute-ledger'
 /**
  * 表结构版本。改结构时：+1 并加一个同号迁移函数 + 一条「旧数据能升上来」的单测。
  * 老迁移函数一个字都不许改（老用户的数据要靠它升上来）。
+ * v1 → v2：给分类和设置补 updatedAt（多设备同步要判断「谁最后改的」）
  */
-export const DB_VERSION = 1
+export const DB_VERSION = 2
 
 export const STORE_EXPENSES = 'expenses'
 export const STORE_ATTACHMENTS = 'attachments'
@@ -29,7 +30,7 @@ export const DEFAULT_CATEGORIES: Array<Pick<Category, 'id' | 'name' | 'emoji' | 
   { id: 'cat-other', name: '其他', emoji: '📦', color: '#B8B2C6', order: 11 },
 ]
 
-/** 迁移函数只用到这几个能力，用最小结构化类型描述，这样裸 IDB 和 idb 的包装类型都能直接传进来 */
+/** 迁移函数只用到这几个能力，用最小结构化类型描述，这样 idb 的包装类型能直接传进来 */
 export interface MigrationStore {
   createIndex(name: string, keyPath: string): unknown
 }
@@ -38,11 +39,16 @@ export interface MigrationDb {
   createObjectStore(name: string, options?: { keyPath?: string | string[] }): MigrationStore
 }
 
-export interface MigrationTx {
-  objectStore(name: string): { put(value: unknown): unknown }
+export interface MigrationObjectStore {
+  put(value: unknown): unknown
+  getAll(): Promise<unknown[]>
 }
 
-export type Migration = (db: MigrationDb, tx: MigrationTx) => void
+export interface MigrationTx {
+  objectStore(name: string): MigrationObjectStore
+}
+
+export type Migration = (db: MigrationDb, tx: MigrationTx) => void | Promise<void>
 
 /**
  * 迁移函数表：upgrade 时按 oldVersion+1 → newVersion 顺序执行。
@@ -70,12 +76,28 @@ export const migrations: Record<number, Migration> = {
     }
     tx.objectStore(STORE_META).put({ key: 'schemaVersion', value: 1 })
   },
+
+  /** v2：给已有分类补 updatedAt（老数据没有这个字段，等于从没改过 → 用 createdAt） */
+  2: async (_db, tx) => {
+    const categories = await tx.objectStore(STORE_CATEGORIES).getAll()
+    for (const raw of categories) {
+      const category = raw as Category
+      if (!category.updatedAt) {
+        tx.objectStore(STORE_CATEGORIES).put({ ...category, updatedAt: category.createdAt })
+      }
+    }
+  },
 }
 
-export function runMigrations(db: MigrationDb, tx: MigrationTx, oldVersion: number, newVersion: number): void {
+export async function runMigrations(
+  db: MigrationDb,
+  tx: MigrationTx,
+  oldVersion: number,
+  newVersion: number,
+): Promise<void> {
   for (let v = oldVersion + 1; v <= newVersion; v++) {
     const migrate = migrations[v]
-    if (migrate) migrate(db, tx)
+    if (migrate) await migrate(db, tx)
   }
   tx.objectStore(STORE_META).put({ key: 'schemaVersion', value: newVersion })
 }
@@ -89,4 +111,9 @@ export const DEFAULT_SETTINGS: Settings = {
   monthlyBudgetCents: 0,
   lastBackupAt: null,
   persisted: false,
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  syncRepo: '',
+  syncBranch: 'main',
+  syncEnabled: false,
+  lastSyncAt: null,
 }

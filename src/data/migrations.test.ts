@@ -33,6 +33,10 @@ function makeMock() {
           calls.push(`put:${name}`)
           return null
         },
+        async getAll() {
+          calls.push(`getAll:${name}`)
+          return []
+        },
       }
     },
   }

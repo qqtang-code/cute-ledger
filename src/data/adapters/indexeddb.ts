@@ -22,7 +22,7 @@ interface LedgerDB extends DBSchema {
   attachments: { key: string; value: Attachment; indexes: { expenseId: string } }
   categories: { key: string; value: Category; indexes: { order: number } }
   settings: { key: string; value: { key: string; value: Settings } }
-  meta: { key: string; value: { key: string; value: number } }
+  meta: { key: string; value: { key: string; value: unknown } }
 }
 
 const SETTINGS_KEY = 'app'
@@ -40,8 +40,8 @@ export function createIndexedDbAdapter(onUpgrade?: UpgradeListener): IndexedDbAd
   async function db(): Promise<IDBPDatabase<LedgerDB>> {
     if (!dbPromise) {
       dbPromise = openDB<LedgerDB>(DB_NAME, DB_VERSION, {
-        upgrade(database, oldVersion, newVersion, transaction) {
-          runMigrations(database, transaction, oldVersion, newVersion ?? DB_VERSION)
+        async upgrade(database, oldVersion, newVersion, transaction) {
+          await runMigrations(database, transaction, oldVersion, newVersion ?? DB_VERSION)
           if (oldVersion > 0) onUpgrade?.(oldVersion, newVersion ?? DB_VERSION)
         },
       })
@@ -72,7 +72,7 @@ export function createIndexedDbAdapter(onUpgrade?: UpgradeListener): IndexedDbAd
 
     async schemaVersion() {
       const meta = await (await db()).get(STORE_META, 'schemaVersion')
-      return meta?.value ?? DB_VERSION
+      return typeof meta?.value === 'number' ? meta.value : DB_VERSION
     },
 
     async queryExpenses(query: ExpenseQuery): Promise<ExpensePage> {
@@ -120,9 +120,15 @@ export function createIndexedDbAdapter(onUpgrade?: UpgradeListener): IndexedDbAd
       await (await db()).delete(STORE_ATTACHMENTS, id)
     },
 
+    async listAttachmentMeta() {
+      const list = await (await db()).getAll(STORE_ATTACHMENTS)
+      return list.map(({ blob: _blob, ...meta }) => meta)
+    },
+
     async listCategories() {
       const list = await (await db()).getAllFromIndex(STORE_CATEGORIES, 'order')
-      return list
+      // updatedAt 兜底：万一有没迁移干净的老记录，也不让同步逻辑拿到 undefined
+      return list.map((category) => ({ ...category, updatedAt: category.updatedAt ?? category.createdAt }))
     },
 
     async saveCategory(category: Category) {
@@ -145,6 +151,19 @@ export function createIndexedDbAdapter(onUpgrade?: UpgradeListener): IndexedDbAd
       await (await db()).put(STORE_SETTINGS, { key: SETTINGS_KEY, value: settings })
     },
 
+    async getMeta<T>(key: string) {
+      const record = await (await db()).get(STORE_META, key)
+      return record?.value as T | undefined
+    },
+
+    async setMeta<T>(key: string, value: T) {
+      await (await db()).put(STORE_META, { key, value })
+    },
+
+    async deleteMeta(key: string) {
+      await (await db()).delete(STORE_META, key)
+    },
+
     async dump(): Promise<DataDump> {
       const database = await db()
       const [expenses, attachments, categories, settings, meta] = await Promise.all([
@@ -155,7 +174,7 @@ export function createIndexedDbAdapter(onUpgrade?: UpgradeListener): IndexedDbAd
         database.get(STORE_META, 'schemaVersion'),
       ])
       return {
-        schemaVersion: meta?.value ?? DB_VERSION,
+        schemaVersion: typeof meta?.value === 'number' ? meta.value : DB_VERSION,
         expenses: sortExpensesDesc(expenses),
         attachments,
         categories,
@@ -216,7 +235,7 @@ export function createIndexedDbAdapter(onUpgrade?: UpgradeListener): IndexedDbAd
       // 清空后把内置分类补回去，不然记账没分类可选
       const now = new Date().toISOString()
       for (const c of DEFAULT_CATEGORIES) {
-        await tx.objectStore(STORE_CATEGORIES).put({ ...c, archived: false, createdAt: now })
+        await tx.objectStore(STORE_CATEGORIES).put({ ...c, archived: false, createdAt: now, updatedAt: now })
       }
       await tx.done
     },

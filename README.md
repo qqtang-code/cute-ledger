@@ -34,6 +34,7 @@ E2E 会先构建再预览，所以跑的永远是最新产物。
 
 ```bash
 node scripts/live-smoke.mjs          # 默认打 GitHub Pages 地址
+GH_TOKEN=xxx node scripts/sync-probe.mjs   # 验一下数据仓库和 token 通不通
 LIVE_URL=http://localhost:4173/cute-ledger/ node scripts/live-smoke.mjs
 ```
 
@@ -44,10 +45,19 @@ LIVE_URL=http://localhost:4173/cute-ledger/ node scripts/live-smoke.mjs
 全部在浏览器的 IndexedDB（库名 `cute-ledger`）里：流水、附件二进制、分类、设置。
 **换设备/清缓存前请先到「设置 → 备份与恢复」导出 zip。**
 
-想跨设备同步的话，见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 里的扩展点 3——
-存储层是接口化的，加一个云端适配器即可，界面不用改。
+## 跨设备同步（手机记的，电脑也能看）
+
+支持把数据同步到一个**私有 GitHub 数据仓库**（`qqtang-code/cute-ledger-data`），
+手机、电脑各连同一个仓库就互通了，照片视频一起同步；断网照常记账，联网自动补传。
+
+配置只需要一个 token，步骤见 **[docs/SYNC.md](docs/SYNC.md)**。
+
+同步的实现要点：本地优先（IndexedDB 是主库，云端是副本）、同一条记录按 `updatedAt` 最后写入者赢、
+删除留墓碑（90 天）防止旧副本复活、附件按 id 增量上传、token 只存本机且不进备份导出。
+存储层仍走 `StorageAdapter` 契约，见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 扩展点 3。
 
 ## 文档
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) —— 分层、目录、**怎么加一个新功能**
 - [docs/DATA_MODEL.md](docs/DATA_MODEL.md) —— 表结构、字段、迁移规则
+- [docs/SYNC.md](docs/SYNC.md) —— 跨设备同步怎么配、怎么排错

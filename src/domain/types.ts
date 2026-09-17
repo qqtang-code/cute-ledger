@@ -10,6 +10,9 @@ export type IsoString = string
 
 export type AttachmentKind = 'image' | 'video'
 
+/** 附件元数据（不含二进制本体），同步与用量统计用 */
+export type AttachmentMeta = Omit<Attachment, 'blob'>
+
 export interface Expense {
   id: Id
   amountCents: Cents
@@ -44,6 +47,8 @@ export interface Category {
   monthlyBudgetCents?: Cents
   archived: boolean
   createdAt: IsoString
+  /** 最后修改时间，多设备同步时用来判断谁新（v2 加的字段） */
+  updatedAt: IsoString
 }
 
 export type ThemeName = 'strawberry' | 'mint' | 'grape'
@@ -58,6 +63,13 @@ export interface Settings {
   monthlyBudgetCents: Cents
   lastBackupAt: IsoString | null
   persisted: boolean
+  /** 最后修改时间，同步用（v2 加的字段） */
+  updatedAt: IsoString
+  /** 同步到哪个私有仓库，形如 owner/repo（token 不在这里，见 data/meta 的 syncToken） */
+  syncRepo: string
+  syncBranch: string
+  syncEnabled: boolean
+  lastSyncAt: IsoString | null
 }
 
 export interface ExpenseFilters {

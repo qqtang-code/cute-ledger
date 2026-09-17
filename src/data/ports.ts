@@ -1,4 +1,4 @@
-import type { Attachment, Category, Expense, ExpenseFilters, Id, Settings } from '../domain/types'
+import type { Attachment, AttachmentMeta, Category, Expense, ExpenseFilters, Id, Settings } from '../domain/types'
 
 export interface ExpenseQuery {
   filters: ExpenseFilters
@@ -50,6 +50,7 @@ export interface StorageAdapter {
   saveAttachment(attachment: Attachment): Promise<void>
   getAttachment(id: Id): Promise<Attachment | undefined>
   listAttachments(expenseId: Id): Promise<Attachment[]>
+  listAttachmentMeta(): Promise<AttachmentMeta[]>
   deleteAttachment(id: Id): Promise<void>
 
   listCategories(): Promise<Category[]>
@@ -59,6 +60,11 @@ export interface StorageAdapter {
 
   getSettings(): Promise<Settings>
   saveSettings(settings: Settings): Promise<void>
+
+  /** 键值对杂项：同步 token、删除墓碑、上次同步时间等（不进备份导出） */
+  getMeta<T>(key: string): Promise<T | undefined>
+  setMeta<T>(key: string, value: T): Promise<void>
+  deleteMeta(key: string): Promise<void>
 
   dump(): Promise<DataDump>
   bulkPut(dump: Omit<DataDump, 'schemaVersion'>, mode: 'merge' | 'replace'): Promise<ImportResult>

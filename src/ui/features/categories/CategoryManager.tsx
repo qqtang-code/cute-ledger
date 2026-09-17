@@ -61,6 +61,7 @@ export function CategoryManager() {
       order: maxOrder + 1,
       archived: false,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     })
     setNewOpen(false)
     setDraftName('')
