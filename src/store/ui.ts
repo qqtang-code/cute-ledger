@@ -33,6 +33,10 @@ interface UiState {
 
 let toastSeq = 0
 
+/** 带「撤销」的 Toast 要留够 5 秒的撤销窗口，普通提示 3 秒就走 */
+const UNDO_TOAST_MS = 6000
+const PLAIN_TOAST_MS = 3000
+
 export const useUiStore = create<UiState>((set, get) => ({
   addSheetOpen: false,
   detailId: null,
@@ -62,6 +66,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   showToast: (message, action) => {
     const id = ++toastSeq
     set({ toasts: [...get().toasts, { id, message, actionLabel: action?.label, onAction: action?.run }] })
+    // 自动消失：不然提示会一直堆在屏幕底下
+    window.setTimeout(() => get().dismissToast(id), action ? UNDO_TOAST_MS : PLAIN_TOAST_MS)
     return id
   },
   dismissToast: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),

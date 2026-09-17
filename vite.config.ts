@@ -5,6 +5,8 @@ import { VitePWA } from 'vite-plugin-pwa'
 // base 写成绝对子路径：线上是 https://qqtang-code.github.io/cute-ledger/
 export default defineConfig({
   base: '/cute-ledger/',
+  // 关于页显示构建时间，方便确认线上跑的是哪一版
+  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')) },
   plugins: [
     react(),
     VitePWA({

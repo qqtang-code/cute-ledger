@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { storage } from '../data/adapters'
 import { createRepository } from '../data/repository'
+import { createBackupService } from '../services/backup'
 import { createAttachmentService, toAttachmentRecord, type PendingAttachment } from '../services/attachments'
 import { createExpenseService, type ExpenseInput, type RemovedExpense } from '../services/expenses'
 import { emptyFiltersValue } from '../domain/filters'
@@ -10,6 +11,7 @@ export const PAGE_SIZE = 20
 
 const repository = createRepository(storage)
 const attachmentService = createAttachmentService(storage)
+const backupService = createBackupService(storage)
 const expenseService = createExpenseService(storage, async (pending, expenseId, now) =>
   pending.map((item: PendingAttachment) => toAttachmentRecord(item, expenseId, now)),
 )
@@ -35,6 +37,9 @@ interface LedgerState {
   removeExpense: (id: Id) => Promise<RemovedExpense>
   undoRemove: (snapshot: RemovedExpense) => Promise<void>
   refreshCategories: () => Promise<void>
+  saveCategory: (category: Category) => Promise<void>
+  removeCategory: (id: Id) => Promise<void>
+  wipeAll: () => Promise<void>
   saveSettings: (patch: Partial<Settings>) => Promise<void>
 }
 
@@ -124,6 +129,25 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
     set({ categories: await storage.listCategories() })
   },
 
+  async saveCategory(category) {
+    await storage.saveCategory(category)
+    await get().refreshCategories()
+  },
+
+  async removeCategory(id) {
+    // 有流水引用的分类不许硬删——上层负责改成归档，这里再兜一道
+    const used = await storage.countExpensesInCategory(id)
+    if (used > 0) throw new Error(`这个分类下还有 ${used} 笔记录，不能删（可以归档）`)
+    await storage.deleteCategory(id)
+    await get().refreshCategories()
+  },
+
+  async wipeAll() {
+    await storage.wipe()
+    await get().refreshCategories()
+    await get().reload()
+  },
+
   async saveSettings(patch) {
     const next = { ...get().settings, ...patch }
     await storage.saveSettings(next)
@@ -131,4 +155,4 @@ export const useLedgerStore = create<LedgerState>((set, get) => ({
   },
 }))
 
-export { attachmentService, expenseService, repository }
+export { attachmentService, backupService, expenseService, repository }
