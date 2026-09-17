@@ -30,6 +30,15 @@ npm run preview    # 预览构建产物：http://localhost:4173/cute-ledger/
 
 E2E 会先构建再预览，所以跑的永远是最新产物。
 
+部署之后可以打线上地址做一次真浏览器冒烟：
+
+```bash
+node scripts/live-smoke.mjs          # 默认打 GitHub Pages 地址
+LIVE_URL=http://localhost:4173/cute-ledger/ node scripts/live-smoke.mjs
+```
+
+它会以手机视口打开、记一笔、刷新验证持久化、打开统计页，并检查有没有页面报错。
+
 ## 数据在哪
 
 全部在浏览器的 IndexedDB（库名 `cute-ledger`）里：流水、附件二进制、分类、设置。

@@ -38,7 +38,12 @@
     R8 分类管理（增删改排序归档，有流水只能归档）、R9 设置（主题/深色/货币/周起始日/存储用量/清空需输「删除」）、
     R10 备份（zip 导出→清空→导入 的端到端闭环 + CSV）、R11 PWA（manifest + SW + 断网可打开可记账）
   - 修掉一个真问题：Toast 原本不会自动消失，会一直堆在屏幕底部（现在 3 秒 / 带撤销的 6 秒）
-- [ ] 任务 5 上线
+- [x] 任务 5 上线 —— 验收：`curl -sI https://qqtang-code.github.io/cute-ledger/` → 200；
+  `curl -s ... | grep 可爱记账本` → 命中；Actions 流水线绿灯；真浏览器移动视口冒烟 8 项全过
+  - 反向验证：把 workflow 构建步骤临时改成 `exit 1` → 推送 → 该次 run **failure**（贴了 `##[error]Process completed with exit code 1.`）
+    → 还原 → 下一次 run **success**。证明流水线不是假绿灯。
+  - Pages 首次启用命令实测可用：`gh api --method POST /repos/qqtang-code/cute-ledger/pages -f build_type=workflow`
+    （返回里 `"build_type":"workflow"`，不再需要 SPEC R14 里的 gh-pages 分支备选路线）
 
 ## 偏离规格的地方（都记了原因）
 
@@ -50,6 +55,22 @@
    原因：Playwright 的 preview 服务的是 `dist/`，如果忘了重新构建就会拿旧产物跑出假绿。
    把构建塞进 webServer 后，每次 E2E 都必然用到最新产物，构建失败＝测试直接起不来。
 3. **加了 @types/react、@types/react-dom**（白名单外），理由见 BLOCKED.md 第 1 条。
+
+## 交付状态
+
+全部 5 个任务完成。最终验收数字：
+
+| 命令 | 结果 |
+|---|---|
+| `npx tsc --noEmit` | 退出码 0 |
+| `npx vitest run` | **142 passed**（13 个文件，跳过 0） |
+| `npx playwright test` | **50 passed**（25 条用例 × 移动 390×844 / 桌面 1280×800） |
+| `npm run build` | 退出码 0，产物 ~250KB / gzip ~85KB |
+| `curl -sI https://qqtang-code.github.io/cute-ledger/` | `200` |
+| `curl -s <线上> \| grep 可爱记账本` | 命中 |
+| `node scripts/live-smoke.mjs` | 8 项全过（含线上记一笔并刷新仍在） |
+
+三条反向验证（都贴了红→绿证据）：金额格式化改坏→单测红；图片长边限制去掉→单测+E2E 红；流水线构建改坏→Actions run failure。
 
 ## 下一期候选（SPEC 的 P2）
 - 云同步 / 把附件写回 GitHub 仓库（带 token 走 GitHub API；`data/ports.ts` 的 StorageAdapter 口子已留好）
