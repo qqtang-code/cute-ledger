@@ -1,11 +1,13 @@
 import type { Id } from '../../domain/types'
-import type { SyncSnapshot } from '../../domain/sync'
+import { isSyncSnapshot, type SyncSnapshot } from '../../domain/sync'
 
 /** 远端读回来的东西 */
 export interface RemoteReadResult {
   snapshot: SyncSnapshot | null
   /** 远端 media/ 下已有的附件 id → 文件路径 */
   files: Map<Id, string>
+  /** 需要让用户知道的情况，比如「远端文件格式不对，已按空仓库处理」 */
+  warning?: string
 }
 
 export interface RemoteUpload {
@@ -36,6 +38,12 @@ export interface RemoteStore {
 
 const API = 'https://api.github.com'
 const STATE_PATH = 'state.json'
+
+/**
+ * git 的空树对象 sha：仓库有提交但零文件时，父提交的 tree 就是它。
+ * 这个对象在服务端并不存在，拿它当 base_tree 会 404（探针实测），所以遇到时要省略 base_tree。
+ */
+const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
 export function bytesToBase64(bytes: Uint8Array): string {
   // 分块转换：一次性展开大数组会爆栈（视频动辄几 MB）
@@ -120,10 +128,17 @@ export class GitHubRemoteStore implements RemoteStore {
   }
 
   private async listTree(): Promise<TreeEntry[]> {
-    const tree = (await this.api('GET', `/repos/${this.repo}/git/trees/${this.branch}?recursive=1`)) as {
-      tree: TreeEntry[]
+    try {
+      const tree = (await this.api('GET', `/repos/${this.repo}/git/trees/${this.branch}?recursive=1`)) as {
+        tree: TreeEntry[]
+      }
+      return tree.tree ?? []
+    } catch (error) {
+      // 仓库有提交但一个文件都没有时（git 的空树），这个接口返回 404。
+      // 那不是错误，就是「空的」。实测过：连空树的 sha 都取不到。
+      if (error instanceof Error && error.message.includes('（404）')) return []
+      throw error
     }
-    return tree.tree ?? []
   }
 
   async read(): Promise<RemoteReadResult> {
@@ -142,7 +157,17 @@ export class GitHubRemoteStore implements RemoteStore {
 
     const blob = (await this.api('GET', `/repos/${this.repo}/git/blobs/${stateEntry.sha}`)) as { content: string }
     const text = new TextDecoder().decode(base64ToBytes(blob.content))
-    return { snapshot: JSON.parse(text) as SyncSnapshot, files }
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      return { snapshot: null, files, warning: '远端 state.json 不是合法 JSON，已按空仓库处理（下次同步会覆盖它）' }
+    }
+    if (!isSyncSnapshot(parsed)) {
+      return { snapshot: null, files, warning: '远端 state.json 不是本账本的快照，已按空仓库处理（下次同步会覆盖它）' }
+    }
+    return { snapshot: parsed, files }
   }
 
   async readFile(path: string): Promise<Uint8Array> {
@@ -178,7 +203,7 @@ export class GitHubRemoteStore implements RemoteStore {
       const parent = (await this.api('GET', `/repos/${this.repo}/git/commits/${parentSha}`)) as {
         tree: { sha: string }
       }
-      baseTree = parent.tree.sha
+      baseTree = parent.tree.sha === EMPTY_TREE_SHA ? null : parent.tree.sha
     }
 
     const tree: Array<Record<string, unknown>> = []
@@ -198,8 +223,11 @@ export class GitHubRemoteStore implements RemoteStore {
     }
 
     // sha 为 null = 删除这个路径（官方文档原文：If the value is null then the file will be deleted）
-    for (const path of deletes) {
-      tree.push({ path, mode: '100644', type: 'blob', sha: null })
+    // 没有 base_tree（首个提交 / 空树）时没有东西可删，跳过
+    if (baseTree) {
+      for (const path of deletes) {
+        tree.push({ path, mode: '100644', type: 'blob', sha: null })
+      }
     }
 
     const newTree = (await this.api('POST', `/repos/${this.repo}/git/trees`, baseTree ? { base_tree: baseTree, tree } : { tree })) as {

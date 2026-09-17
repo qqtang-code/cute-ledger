@@ -71,6 +71,27 @@ export interface MergeResult {
   stats: { expensesKept: number; remoteWins: number; deleted: number }
 }
 
+/**
+ * 校验远端 state.json 是不是本账本的完整快照。
+ * 数据仓库里可能有别人手工放的东西、旧格式、或写到一半的内容——
+ * 遇到不认识的形状要能识别出来，而不是拿着一堆 undefined 去 merge 直接崩。
+ */
+export function isSyncSnapshot(value: unknown): value is SyncSnapshot {
+  if (!value || typeof value !== 'object') return false
+  const s = value as Partial<SyncSnapshot>
+  return (
+    Array.isArray(s.expenses) &&
+    Array.isArray(s.categories) &&
+    Array.isArray(s.attachments) &&
+    typeof s.schemaVersion === 'number' &&
+    typeof s.tombstones === 'object' &&
+    s.tombstones !== null &&
+    typeof s.settings === 'object' &&
+    s.settings !== null &&
+    typeof s.settings.updatedAt === 'string'
+  )
+}
+
 export function emptySnapshot(settings: Settings, schemaVersion: number, now: IsoString): SyncSnapshot {
   return {
     schemaVersion,

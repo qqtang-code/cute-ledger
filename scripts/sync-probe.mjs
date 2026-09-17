@@ -20,8 +20,10 @@ if (!TOKEN) {
 }
 
 let calls = 0
+const VERBOSE = process.env.PROBE_VERBOSE === '1'
 async function api(method, path, body) {
   calls += 1
+  if (VERBOSE) console.log(`   → ${method} ${path}${body ? ` ${JSON.stringify(body).slice(0, 160)}` : ''}`)
   const response = await fetch(`${API}${path}`, {
     method,
     headers: {
@@ -71,6 +73,9 @@ async function ensureBranch(initialState) {
   return created
 }
 
+/** git 的空树对象：仓库有提交但零文件时，父提交的 tree 就是这个 sha */
+const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+
 async function commitFiles(files, message, deletes = []) {
   const ref = await readRef()
   const parentSha = ref?.object?.sha ?? null
@@ -78,7 +83,8 @@ async function commitFiles(files, message, deletes = []) {
   let baseTree = null
   if (parentSha) {
     const parent = await api('GET', `/repos/${REPO}/git/commits/${parentSha}`)
-    baseTree = parent.tree.sha
+    // 实测量的坑：空树对象服务端不存在，拿它当 base_tree 会 404，所以这种时候不带 base_tree
+    baseTree = parent.tree.sha === EMPTY_TREE_SHA ? null : parent.tree.sha
   }
 
   const tree = []
@@ -95,7 +101,9 @@ async function commitFiles(files, message, deletes = []) {
     tree.push({ path, mode: '100644', type: 'blob', sha: null })
   }
 
-  const treeBody = baseTree ? { base_tree: baseTree, tree } : { tree }
+  // 没有 base_tree（空树或首个提交）时，deletes 无从谈起，直接忽略
+  const effectiveTree = baseTree ? tree : tree.filter((entry) => entry.sha !== null)
+  const treeBody = baseTree ? { base_tree: baseTree, tree: effectiveTree } : { tree: effectiveTree }
   const newTree = await api('POST', `/repos/${REPO}/git/trees`, treeBody)
 
   const commitBody = { message, tree: newTree.sha, parents: parentSha ? [parentSha] : [] }
@@ -144,9 +152,49 @@ try {
   await commitFiles({ 'state.json': JSON.stringify({ probe: 'clean', at: new Date().toISOString() }) }, '探针：收尾', [
     'media/demo.webp',
   ])
-  const after = await api('GET', `/repos/${REPO}/git/trees/${BRANCH}?recursive=1`)
-  const afterPaths = after.tree.map((entry) => entry.path)
-  check('sha=null 能删除文件', !afterPaths.includes('media/demo.webp'), afterPaths.join(', '))
+  let after = await api('GET', `/repos/${REPO}/git/trees/${BRANCH}?recursive=1`)
+  check('sha=null 能删除文件', !after.tree.some((entry) => entry.path === 'media/demo.webp'), after.tree.map((e) => e.path).join(', '))
+
+  // 把仓库清成「有提交、零文件」的空树状态。
+  // 注意：Git Data API 建不出空树（POST trees 把最后一个文件删掉会 404，实测），
+  // 所以清空只能走 Contents API 的 DELETE。
+  const lastSha = (await api('GET', `/repos/${REPO}/contents/state.json`)).sha
+  await api('DELETE', `/repos/${REPO}/contents/state.json`, {
+    message: '探针：清成空树（有提交、零文件）',
+    sha: lastSha,
+    branch: BRANCH,
+  })
+  let emptyListing = ''
+  try {
+    const listing = await api('GET', `/repos/${REPO}/git/trees/${BRANCH}?recursive=1`)
+    emptyListing = `200 且返回 ${(listing.tree ?? []).length} 个文件`
+  } catch (error) {
+    emptyListing = /→ 404\b/.test(error.message) ? '404' : `其他错误：${error.message}`
+  }
+  // 实测：这一步有时 404、有时 200 空列表（GitHub 侧缓存生效时间不同），
+  // 客户端两种情况都要当成「空的」，不能报错。
+  check(
+    '零文件时列目录要么 404 要么空列表（两种客户端都得当空的处理）',
+    emptyListing === '404' || emptyListing === '200 且返回 0 个文件',
+    emptyListing,
+  )
+
+  // 关键：在空树之上再写一次 —— 这正是 app 第一次同步要走的路径
+  const reborn = await commitFiles(
+    { 'state.json': JSON.stringify({ probe: '在空树之上重建', at: new Date().toISOString() }) },
+    '探针：空树之上再写',
+  )
+  check('空树之上也能建提交（base_tree 是那棵空树）', typeof reborn === 'string' && reborn.length === 40, reborn.slice(0, 7))
+
+  // 收尾：再把文件删掉，仓库保持「有提交、零文件」，不留垃圾
+  const rebornSha = (await api('GET', `/repos/${REPO}/contents/state.json`)).sha
+  await api('DELETE', `/repos/${REPO}/contents/state.json`, {
+    message: '探针：收尾清理',
+    sha: rebornSha,
+    branch: BRANCH,
+  })
+  after = await api('GET', `/repos/${REPO}/git/trees/${BRANCH}?recursive=1`).catch(() => ({ tree: [] }))
+  check('收尾完成，仓库没有遗留文件', (after.tree ?? []).length === 0, `${(after.tree ?? []).length} 个文件`)
 
   console.log(`\n共 ${calls} 次 API 调用，全部成功。同步引擎可以照这套形状写。`)
 } catch (error) {

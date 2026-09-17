@@ -43,14 +43,23 @@ function createFakeGitHub(options: { canPush?: boolean } = {}) {
     }
     if (method === 'GET' && path.includes('/git/trees/')) {
       const ref = decodeURIComponent(path.split('/git/trees/')[1].split('?')[0])
-      const entries = ref === 'main' ? files : trees.get(ref) ?? new Map()
-      const tree =
-        entries instanceof Map
-          ? [...entries.entries()].map(([p, sha]) => ({ path: p, sha, type: 'blob', mode: '100644' }))
-          : (entries as Array<{ path: string; sha: string | null }>)
-              .filter((entry) => entry.sha !== null)
-              .map((entry) => ({ path: entry.path, sha: entry.sha, type: 'blob', mode: '100644' }))
-      return json({ tree })
+      // 解析这次要返回哪棵树：直接给 tree sha，或者给分支名（顺着 head 提交找它的树）
+      let entries: Array<{ path: string; sha: string | null }> | null = null
+      if (ref !== 'main' && trees.has(ref)) {
+        entries = trees.get(ref)!
+      } else if (ref === 'main') {
+        const headTree = head ? commits.get(head)?.tree : undefined
+        entries = headTree && trees.has(headTree)
+          ? trees.get(headTree)!
+          : [...files.entries()].map(([p, sha]) => ({ path: p, sha }))
+      }
+      // 真 API 的行为：仓库有提交但一个文件都没有时返回 404（空树）
+      if (!entries || (head && entries.length === 0)) return fail(404, 'Not Found')
+      return json({
+        tree: entries
+          .filter((entry) => entry.sha !== null)
+          .map((entry) => ({ path: entry.path, sha: entry.sha, type: 'blob', mode: '100644' })),
+      })
     }
     if (method === 'GET' && path.includes('/git/blobs/')) {
       const sha = path.split('/').pop()!
@@ -81,8 +90,10 @@ function createFakeGitHub(options: { canPush?: boolean } = {}) {
     }
     if (method === 'POST' && path.endsWith('/git/trees')) {
       if (!head) return fail(409, 'Git Repository is empty.')
+      // 真 API 的行为：空树对象服务端不存在，拿它当 base_tree 会 404（探针实测）
+      if (body?.base_tree === '4b825dc642cb6eb9a060e54bf8d69288fbee4904') return fail(404, 'Not Found')
       const entries = (body?.tree ?? []) as Array<{ path: string; sha: string | null }>
-      const base = new Map(files)
+      const base = body?.base_tree ? new Map(files) : new Map<string, string>()
       for (const entry of entries) {
         if (entry.sha === null) base.delete(entry.path)
         else base.set(entry.path, entry.sha)
@@ -118,6 +129,12 @@ function createFakeGitHub(options: { canPush?: boolean } = {}) {
   return {
     fetchImpl,
     requests,
+    blobs,
+    treesState: trees,
+    setHead(commitSha: string, treeSha: string) {
+      commits.set(commitSha, { tree: treeSha, parents: [], message: '手工' })
+      head = commitSha
+    },
     get head() {
       return head
     },
@@ -185,6 +202,76 @@ describe('空仓库的坑', () => {
     const patch = fake.requests.find((r) => r.method === 'PATCH' && r.path.includes('/git/refs/heads/main'))
     expect(patch).toBeTruthy()
     expect(patch!.body?.sha).toBeTruthy()
+  })
+})
+
+describe('仓库为空但有提交（空树）', () => {
+  test('列目录 404 被当成「空的」，不是错误', async () => {
+    const fake = createFakeGitHub()
+    const remote = new GitHubRemoteStore({ repo: 'me/data', branch: 'main', token: 't', fetchImpl: fake.fetchImpl })
+
+    // 先造出「有提交、零文件」的状态：写一次再删掉那个文件
+    await remote.write({ snapshot: snapshot(), uploads: [], deletes: [], message: '首次' })
+    await remote.write({ snapshot: snapshot({ expenses: [] }), uploads: [], deletes: ['state.json'], message: '删空' })
+
+    const result = await remote.read()
+    expect(result.snapshot).toBeNull()
+    expect(result.files.size).toBe(0)
+  })
+
+  test('这种状态下写入也能成功（base_tree 用的就是那棵空树）', async () => {
+    const fake = createFakeGitHub()
+    const remote = new GitHubRemoteStore({ repo: 'me/data', branch: 'main', token: 't', fetchImpl: fake.fetchImpl })
+    await remote.write({ snapshot: snapshot(), uploads: [], deletes: [], message: '首次' })
+    await remote.write({ snapshot: snapshot({ expenses: [] }), uploads: [], deletes: ['state.json'], message: '删空' })
+
+    await remote.write({ snapshot: snapshot(), uploads: [], deletes: [], message: '空树上再写' })
+    const result = await remote.read()
+    expect(result.snapshot?.expenses).toHaveLength(1)
+  })
+})
+
+describe('远端文件格式不对时自愈', () => {
+  test('state.json 不是本账本的快照 → 当成空仓库，并带出提示，不崩', async () => {
+    const fake = createFakeGitHub()
+    const remote = new GitHubRemoteStore({ repo: 'me/data', branch: 'main', token: 't', fetchImpl: fake.fetchImpl })
+    // 手工塞一个别人放的文件
+    const sha = 'blob-junk'
+    fake.blobs.set(sha, new TextEncoder().encode('{"probe":"clean"}'))
+    fake.treesState.set('tree-junk', [{ path: 'state.json', sha }])
+    fake.setHead('commit-junk', 'tree-junk')
+
+    const result = await remote.read()
+    expect(result.snapshot).toBeNull()
+    expect(result.warning).toContain('不是本账本的快照')
+  })
+
+  test('父提交的树是空树时，不能再带 base_tree（真 API 会 404）', async () => {
+    const fake = createFakeGitHub()
+    const remote = new GitHubRemoteStore({ repo: 'me/data', branch: 'main', token: 't', fetchImpl: fake.fetchImpl })
+    // 手工造出「有提交、零文件」的状态：父提交的 tree 就是 git 空树 sha
+    fake.setHead('commit-empty', '4b825dc642cb6eb9a060e54bf8d69288fbee4904')
+    fake.files.clear()
+
+    await remote.write({ snapshot: snapshot(), uploads: [], deletes: [], message: '空树之上' })
+
+    const treeRequest = fake.requests.filter((r) => r.method === 'POST' && r.path.endsWith('/git/trees')).pop()
+    expect(treeRequest?.body?.base_tree).toBeUndefined()
+    const result = await remote.read()
+    expect(result.snapshot?.expenses).toHaveLength(1)
+  })
+
+  test('state.json 是坏 JSON → 同样自愈', async () => {
+    const fake = createFakeGitHub()
+    const remote = new GitHubRemoteStore({ repo: 'me/data', branch: 'main', token: 't', fetchImpl: fake.fetchImpl })
+    const sha = 'blob-broken'
+    fake.blobs.set(sha, new TextEncoder().encode('{不是 json'))
+    fake.treesState.set('tree-broken', [{ path: 'state.json', sha }])
+    fake.setHead('commit-broken', 'tree-broken')
+
+    const result = await remote.read()
+    expect(result.snapshot).toBeNull()
+    expect(result.warning).toContain('不是合法 JSON')
   })
 })
 

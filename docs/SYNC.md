@@ -67,6 +67,9 @@
 | `Not Found` / `404` | 仓库名写错，或 token 没勾这个仓库 | 核对仓库名，检查 token 的 Repository access |
 | `Resource not accessible by personal access token` | token 权限没给 Contents: Read and write | 改权限或重新生成 |
 | 一直没有「上次同步」 | 没勾「自动同步」，也没点「立即同步」 | 勾上，或手动点一次 |
+| 提示「远端 state.json 不是本账本的快照，已按空仓库处理」 | 数据仓库里被人手工放了东西，或文件被写坏了 | 不用管，下次同步会覆盖成正常内容；不放心就先看一眼那个文件 |
+
+排查时可以带上探针脚本（见下一节），它会把你这条链路一节一节打勾或打叉。
 
 ## 六、想自己验一下接口通不通（可选）
 
@@ -80,7 +83,22 @@ GH_TOKEN=<你的token> node scripts/sync-probe.mjs qqtang-code/cute-ledger-data
 
 ---
 
-## 七、安全边界（说清楚，别误会）
+## 七、实现时踩过的两个 GitHub 坑（写给以后的自己）
+
+这两条都是在真实仓库上跑探针才发现的，光看文档看不出来：
+
+1. **空仓库不能直接用 Git Data API**。仓库一个提交都没有时，建 blob / tree / commit 一律返回
+   `409 Git Repository is empty`。首个提交必须走 Contents API（`PUT /contents/state.json`），
+   分支才会出现。
+2. **GitHub 建不出「空树」**。仓库有提交但一个文件都没有时：
+   - 列目录接口可能返回 404、也可能返回空列表（缓存生效时间不同）——两种都得当成「空的」；
+   - 拿那棵空树（sha `4b825dc…`）当 `base_tree` 去建新树会 **404**，所以这时必须干脆不带 `base_tree`；
+   - 想把仓库清空，只能用 Contents API 的 DELETE，不能用 Git Data API 删最后一个文件。
+
+（顺带：本项目的同步写入永远会带上 `state.json`，所以不会产生空树；上面第 2 条只影响
+「仓库被手工清空过」这种情况——但正好被踩到了，所以客户端做成了自愈。）
+
+## 八、安全边界（说清楚，别误会）
 
 - 数据在**私有**仓库，但 GitHub 官方有权限看到仓库内容；真正要端到端加密得另做一套（本期没做）。
 - token 存在浏览器的 IndexedDB 里。**别在公用电脑上配**；手机丢了建议直接去 GitHub 撤销那个 token。

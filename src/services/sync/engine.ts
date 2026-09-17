@@ -145,6 +145,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
   await adapter.saveSettings({ ...settings, lastSyncAt: now })
 
   const summary = [
+    remoteRead.warning ?? '',
     `拉取 ${pulled.expenses} 笔/分类 ${pulled.categories}`,
     pulled.attachments > 0 ? `下载 ${pulled.attachments} 个附件` : '',
     pulled.removed > 0 ? `删除 ${pulled.removed} 条` : '',
