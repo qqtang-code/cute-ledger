@@ -38,7 +38,12 @@ test('预算：设了之后有进度条，超了变红并提示超支（R7）', 
   await expect(page.getByTestId('budget-bar')).toHaveAttribute('data-level', 'ok')
 
   await goto(page, '账本')
-  await addExpense(page, '120.00')
+  await page.getByRole('button', { name: '记一笔' }).click()
+  await page.getByTestId('amount-input').fill('120.00')
+  await page.getByTestId('save-expense').click()
+  // 保存成功的提示里要顺带提醒超支，但不打断保存（R7）
+  await expectToast(page, '本月已超支 ¥20.00')
+  await expect(page.getByTestId('expense-item')).toHaveCount(1)
 
   await goto(page, '预算')
   await expect(page.getByTestId('budget-bar')).toHaveAttribute('data-level', 'over')

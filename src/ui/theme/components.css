@@ -668,3 +668,54 @@
 .import-preview .row {
   margin: var(--space-2) 0;
 }
+
+/* 骨架屏（R12 要求加载态也有设计，不能是裸的浏览器默认样式） */
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+}
+.skeleton {
+  display: block;
+  background: linear-gradient(90deg, var(--c-surface-2), var(--c-border), var(--c-surface-2));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+  border-radius: var(--radius-sm);
+}
+.skeleton--circle {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-pill);
+  flex: 0 0 auto;
+}
+.skeleton--line {
+  height: 14px;
+  flex: 1;
+}
+.skeleton--short {
+  width: 56px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}

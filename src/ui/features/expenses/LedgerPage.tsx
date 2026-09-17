@@ -130,6 +130,18 @@ export function LedgerPage() {
         )
       ) : null}
 
+      {loading && items.length === 0 ? (
+        <div className="skeleton-list" data-testid="ledger-skeleton" aria-hidden="true">
+          {[0, 1, 2, 3].map((i) => (
+            <div className="skeleton-row" key={i}>
+              <span className="skeleton skeleton--circle" />
+              <span className="skeleton skeleton--line" />
+              <span className="skeleton skeleton--short" />
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <div className="day-groups">
         {groups.map((group) => (
           <div className="day-group" key={group.date} data-testid="day-group">

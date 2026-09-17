@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatDayLabel, parseDateString, toDateString } from '../../../domain/dates'
-import { parseAmountToCents } from '../../../domain/money'
+import { budgetProgress } from '../../../domain/budget'
+import { formatCents, parseAmountToCents } from '../../../domain/money'
 import { MAX_TAGS } from '../../../domain/media'
-import type { Expense } from '../../../domain/types'
+import type { DateString, Expense } from '../../../domain/types'
 import { repository, useLedgerStore } from '../../../store/ledger'
 import { useUiStore } from '../../../store/ui'
 import { Sheet } from '../../components/Sheet'
@@ -16,6 +17,7 @@ interface Props {
 
 export function AddExpenseSheet({ editing = null }: Props) {
   const categories = useLedgerStore((s) => s.categories)
+  const settings = useLedgerStore((s) => s.settings)
   const today = useMemo(() => toDateString(new Date()), [])
   const addExpense = useLedgerStore((s) => s.addExpense)
   const editExpense = useLedgerStore((s) => s.editExpense)
@@ -104,7 +106,7 @@ export function AddExpenseSheet({ editing = null }: Props) {
         const created = await addExpense(input)
         setHighlight(created.id)
         window.setTimeout(() => setHighlight(null), 2000)
-        showToast('记好了 ✨')
+        showToast(await buildSavedMessage(created.spentAt))
       }
       closeAddSheet()
     } catch (err) {
@@ -112,6 +114,20 @@ export function AddExpenseSheet({ editing = null }: Props) {
     } finally {
       setSaving(false)
     }
+  }
+
+  /** 存完之后给一句反馈。超预算就在同一句里提醒，但不打断保存（SPEC R7） */
+  async function buildSavedMessage(spentDate: DateString): Promise<string> {
+    if (settings.monthlyBudgetCents <= 0) return '记好了 ✨'
+    const summary = await repository.monthSummary(spentDate)
+    const progress = budgetProgress(summary.totalCents, settings.monthlyBudgetCents)
+    if (progress.level === 'over') {
+      return `记好了 ✨ 本月已超支 ${formatCents(progress.overCents, settings.currencySymbol)}`
+    }
+    if (progress.level === 'warn') {
+      return `记好了 ✨ 本月已用掉预算的 ${Math.round(progress.ratio * 100)}%`
+    }
+    return '记好了 ✨'
   }
 
   const title = editing ? '改一笔' : '记一笔'
