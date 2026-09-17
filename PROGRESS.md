@@ -30,7 +30,9 @@
 - [x] 任务 1 骨架 —— 验收：`npx vite build` 退出 0；`npx tsc --noEmit` 退出 0；`npx playwright test` 6 passed（移动 390×844 + 桌面 1280×800 各 3 条）
 - [x] 任务 2 数据层 —— 验收：`npx vitest run` 127 passed / 11 files（要求 ≥25 条，实际 127 条）
   - 反向验证：把 `formatCents` 改成按元输出 → 4 条单测变红（贴了输出）→ 还原 → 127 条全绿
-- [ ] 任务 3 记账主线
+- [x] 任务 3 记账主线 —— 验收：`npx playwright test` 30 passed（15 条用例 × 移动/桌面）
+  - 覆盖 R1 记一笔/校验、R2 列表分页与月合计、R3 搜索筛选、R4 详情编辑删除撤销、R5 附件压缩入库
+  - 反向验证：把 planImageCompression 的缩放去掉 → 单测 3 条变红 + E2E 压缩用例变红（实测长边 3200 > 1600）→ 还原 → 136 单测 + 30 E2E 全绿
 - [ ] 任务 4 统计与周边
 - [ ] 任务 5 上线
 

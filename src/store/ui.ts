@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 
-// 界面状态（弹层、Toast 之类），纯 UI，不碰数据
 export interface Toast {
   id: number
   message: string
@@ -10,9 +9,24 @@ export interface Toast {
 
 interface UiState {
   addSheetOpen: boolean
+  /** 从列表点开的流水详情 */
+  detailId: string | null
+  detailEditing: boolean
+  /** 大图/视频查看器 */
+  viewer: { ids: string[]; index: number } | null
+  /** 刚记完一笔记下来，列表里高亮 2 秒 */
+  highlightId: string | null
+  toasts: Toast[]
+
   openAddSheet: () => void
   closeAddSheet: () => void
-  toasts: Toast[]
+  openDetail: (id: string) => void
+  setDetailEditing: (editing: boolean) => void
+  closeDetail: () => void
+  openViewer: (ids: string[], index: number) => void
+  stepViewer: (delta: number) => void
+  closeViewer: () => void
+  setHighlight: (id: string | null) => void
   showToast: (message: string, action?: { label: string; run: () => void }) => number
   dismissToast: (id: number) => void
 }
@@ -21,9 +35,30 @@ let toastSeq = 0
 
 export const useUiStore = create<UiState>((set, get) => ({
   addSheetOpen: false,
+  detailId: null,
+  detailEditing: false,
+  viewer: null,
+  highlightId: null,
+  toasts: [],
+
   openAddSheet: () => set({ addSheetOpen: true }),
   closeAddSheet: () => set({ addSheetOpen: false }),
-  toasts: [],
+
+  openDetail: (id) => set({ detailId: id, detailEditing: false }),
+  setDetailEditing: (editing) => set({ detailEditing: editing }),
+  closeDetail: () => set({ detailId: null, detailEditing: false }),
+
+  openViewer: (ids, index) => set({ viewer: { ids, index } }),
+  stepViewer: (delta) => {
+    const viewer = get().viewer
+    if (!viewer) return
+    const next = (viewer.index + delta + viewer.ids.length) % viewer.ids.length
+    set({ viewer: { ...viewer, index: next } })
+  },
+  closeViewer: () => set({ viewer: null }),
+
+  setHighlight: (id) => set({ highlightId: id }),
+
   showToast: (message, action) => {
     const id = ++toastSeq
     set({ toasts: [...get().toasts, { id, message, actionLabel: action?.label, onAction: action?.run }] })
