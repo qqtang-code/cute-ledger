@@ -32,9 +32,7 @@ jobs:
         run: npx vitest run
 
       - name: 类型检查 + 构建
-        run: |
-          echo '故意弄坏构建，验证流水线会报错（反向验证）'
-          exit 1
+        run: npm run build
 
       - uses: actions/upload-pages-artifact@v5
         with:
