@@ -92,6 +92,22 @@ GH_TOKEN=<你的token> node scripts/sync-probe.mjs <你的账号>/sync-probe-scr
 （早期版本没有这道闸门，直接对着数据仓库跑，把用户的 `state.json` 删过一次——数据后来从
 git 历史里逐字节恢复了。闸门就是那次事故留下的。）
 
+### 还有一道「真链路校验」（比探针更狠，也更接近你的实际用法）
+
+探针只验接口形状，不跑应用。仓库里还有一个脚本，用真浏览器打开线上站点、配同一个仓库、
+真的记一笔带照片的账、再在另一台设备上同步回来，逐项对比字节：
+
+```bash
+GH_TOKEN=$(gh auth token) node scripts/real-sync-check.mjs <你的账号>/sync-probe-scratch
+```
+
+它会断言：云端附件不是空的、电脑上的字节数和云端**完全一致**、浏览器真的把像素画出来了
+（`naturalWidth` 不为 0）。同样的安全闸门：仓库名里没有 `scratch`/`probe` 就拒绝运行，
+结束时会把该仓库清空。
+
+`scripts/real-sync-check.mjs` 和 `scripts/sync-probe.mjs` 都**不要**指向
+`cute-ledger-data`——那是你的真实数据仓库，两者都会拒绝（但别去试）。
+
 ---
 
 ## 七、实现时踩过的 GitHub 坑（写给以后的自己）
