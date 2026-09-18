@@ -34,15 +34,22 @@ export interface IndexedDbAdapter extends StorageAdapter {
   close(): void
 }
 
-export function createIndexedDbAdapter(onUpgrade?: UpgradeListener): IndexedDbAdapter {
+export interface IndexedDbAdapterOptions {
+  /** 库名。默认就是本账本的库；测试里模拟「另一台设备」时会传不同的名字 */
+  dbName?: string
+  onUpgrade?: UpgradeListener
+}
+
+export function createIndexedDbAdapter(options: IndexedDbAdapterOptions = {}): IndexedDbAdapter {
+  const dbName = options.dbName ?? DB_NAME
   let dbPromise: Promise<IDBPDatabase<LedgerDB>> | null = null
 
   async function db(): Promise<IDBPDatabase<LedgerDB>> {
     if (!dbPromise) {
-      dbPromise = openDB<LedgerDB>(DB_NAME, DB_VERSION, {
+      dbPromise = openDB<LedgerDB>(dbName, DB_VERSION, {
         async upgrade(database, oldVersion, newVersion, transaction) {
           await runMigrations(database, transaction, oldVersion, newVersion ?? DB_VERSION)
-          if (oldVersion > 0) onUpgrade?.(oldVersion, newVersion ?? DB_VERSION)
+          if (oldVersion > 0) options.onUpgrade?.(oldVersion, newVersion ?? DB_VERSION)
         },
       })
     }
@@ -62,7 +69,7 @@ export function createIndexedDbAdapter(onUpgrade?: UpgradeListener): IndexedDbAd
   }
 
   return {
-    name: 'indexeddb',
+    name: `indexeddb:${dbName}`,
 
     async init() {
       await db()

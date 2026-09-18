@@ -88,25 +88,35 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
     pulled.settings = true
   }
 
-  // 先下二进制，再落元数据：反过来的话，界面上会出现「有记录但图片打不开」
-  const localAttachmentIds = new Set(local.attachments.map((a) => a.id))
+  /**
+   * 附件：二进制先下下来，成功了才落元数据。
+   * 注意这里**只**能写一次——曾经在这后面又补了一个「把元数据落库」的循环，
+   * 结果它拿空 blob 把刚下好的图片覆盖成了 0 字节（界面表现就是「图片同步不过来」）。
+   */
   const remoteById = new Map(merge.merged.attachments.map((a) => [a.id, a]))
-  for (const id of merge.downloadAttachmentIds) {
+  const needDownload = new Set(merge.downloadAttachmentIds)
+  // 自愈：本机要是有「元数据在、二进制是空的」附件（历史版本留下的空壳），也重新下一遍
+  for (const meta of merge.merged.attachments) {
+    if (needDownload.has(meta.id)) continue
+    const localRecord = await adapter.getAttachment(meta.id)
+    if (localRecord && localRecord.sizeBytes > 0 && localRecord.blob.size === 0) {
+      needDownload.add(meta.id)
+    }
+  }
+  const failedDownloads: string[] = []
+  for (const id of needDownload) {
     const meta = remoteById.get(id)
     if (!meta) continue
     try {
       const path = remoteRead.files.get(id) ?? attachmentPath(id, meta.mime)
       const bytes = await remote.readFile(path)
+      if (bytes.length === 0) throw new Error('远端文件是空的')
       await adapter.saveAttachment({ ...meta, blob: new Blob([new Uint8Array(bytes)], { type: meta.mime }) })
       pulled.attachments += 1
     } catch {
-      // 单个附件下载失败不影响整次同步：元数据先不落库，下次同步再试
-      localAttachmentIds.add(id)
+      // 单个附件下载失败不影响整次同步：元数据不落库，下次同步再试（会在报告里说清楚）
+      failedDownloads.push(id)
     }
-  }
-  for (const meta of merge.applied.attachments) {
-    if (localAttachmentIds.has(meta.id)) continue
-    await adapter.saveAttachment({ ...meta, blob: new Blob([], { type: meta.mime }) })
   }
 
   // 远端文件里已经没有对应记录的，删掉
@@ -120,10 +130,10 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
   for (const id of merge.uploadAttachmentIds) {
     const attachment = await adapter.getAttachment(id)
     if (!attachment || attachment.sizeBytes === 0) continue
-    uploads.push({
-      path: attachmentPath(id, attachment.mime),
-      data: new Uint8Array(await attachment.blob.arrayBuffer()),
-    })
+    const data = new Uint8Array(await attachment.blob.arrayBuffer())
+    // 本机就是空的就别传了（传上去对方也打不开），下一轮同步还能再试
+    if (data.length === 0) continue
+    uploads.push({ path: attachmentPath(id, attachment.mime), data })
   }
 
   const merged = { ...merge.merged, tombstones: pruneTombstones(merge.merged.tombstones, now) }
@@ -148,6 +158,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
     remoteRead.warning ?? '',
     `拉取 ${pulled.expenses} 笔/分类 ${pulled.categories}`,
     pulled.attachments > 0 ? `下载 ${pulled.attachments} 个附件` : '',
+    failedDownloads.length > 0 ? `${failedDownloads.length} 个附件没下下来，下次同步会重试` : '',
     pulled.removed > 0 ? `删除 ${pulled.removed} 条` : '',
     nothingToPush
       ? '没有需要上传的'

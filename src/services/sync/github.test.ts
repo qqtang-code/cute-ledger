@@ -5,10 +5,14 @@ import type { SyncSnapshot } from '../../domain/sync'
 
 /**
  * 假 GitHub：行为对齐真 API（探针实测过的那几点）：
- * - 空仓库没有分支，ref 返回 404
+ * - **一次都没提交过**时，ref 和 trees 都返回 409 Git Repository is empty（不是 404）
+ * - **有提交但零文件**（git 空树）时，trees 返回 404
  * - 空仓库调 Git Data API 的 blob/tree/commit 一律 409 Git Repository is empty
  * - Contents API 的 PUT 能在空仓库里建出第一个提交
  * 每个请求都记下来，用例断言「发出去的请求长什么样」。
+ *
+ * 这两个状态码的差别是真踩过的坑：假件早期对着 404 写，客户端也就只认 404，
+ * 结果「指向一个全新空仓库」这条路径在真环境里直接报错，测试却是绿的。
  */
 function createFakeGitHub(options: { canPush?: boolean } = {}) {
   const blobs = new Map<string, Uint8Array>()
@@ -34,7 +38,8 @@ function createFakeGitHub(options: { canPush?: boolean } = {}) {
       return json({ full_name: 'me/data', private: true, permissions: { push: options.canPush ?? true } })
     }
     if (method === 'GET' && path.endsWith('/git/ref/heads/main')) {
-      return head ? json({ object: { sha: head } }) : fail(404, 'Not Found')
+      // 实测：一次都没提交过时是 409，不是 404
+      return head ? json({ object: { sha: head } }) : fail(409, 'Git Repository is empty.')
     }
     if (method === 'GET' && path.includes('/git/commits/')) {
       const sha = path.split('/').pop()!
@@ -42,6 +47,8 @@ function createFakeGitHub(options: { canPush?: boolean } = {}) {
       return commit ? json({ tree: { sha: commit.tree } }) : fail(404, 'Not Found')
     }
     if (method === 'GET' && path.includes('/git/trees/')) {
+      // 实测：一次都没提交过时是 409；有提交但零文件（空树）才是 404
+      if (!head) return fail(409, 'Git Repository is empty.')
       const ref = decodeURIComponent(path.split('/git/trees/')[1].split('?')[0])
       // 解析这次要返回哪棵树：直接给 tree sha，或者给分支名（顺着 head 提交找它的树）
       let entries: Array<{ path: string; sha: string | null }> | null = null
@@ -202,6 +209,48 @@ describe('空仓库的坑', () => {
     const patch = fake.requests.find((r) => r.method === 'PATCH' && r.path.includes('/git/refs/heads/main'))
     expect(patch).toBeTruthy()
     expect(patch!.body?.sha).toBeTruthy()
+  })
+})
+
+describe('指向一个全新的空仓库（一次都没提交过）', () => {
+  // 实测记下来的：这种仓库里，ref 和 trees 都返回 409 Git Repository is empty。
+  // 用户照着 docs/SYNC.md 新建一个仓库就用，遇到的就是这个状态——
+  // 客户端要是只认 404，这里会直接抛「GitHub GET ... 失败（409）」，首次同步根本走不到初始化。
+  test('read 不报错，按「云端还什么都没有」处理', async () => {
+    const fake = createFakeGitHub()
+    const remote = new GitHubRemoteStore({ repo: 'me/data', branch: 'main', token: 't', fetchImpl: fake.fetchImpl })
+
+    const result = await remote.read()
+
+    expect(result.snapshot).toBeNull()
+    expect(result.files.size).toBe(0)
+  })
+
+  test('首次同步能一路走通：Contents API 建出分支 → 照片也传上去', async () => {
+    const fake = createFakeGitHub()
+    const remote = new GitHubRemoteStore({ repo: 'me/data', branch: 'main', token: 't', fetchImpl: fake.fetchImpl })
+
+    const photo = new Uint8Array([1, 2, 3, 4, 250, 251])
+    await remote.write({
+      snapshot: snapshot(),
+      uploads: [{ path: 'media/a1.jpg', data: photo }],
+      deletes: [],
+      message: '首次同步',
+    })
+
+    const back = await remote.read()
+    expect(back.snapshot?.expenses.map((e) => e.id)).toEqual(['e1'])
+    expect(back.files.get('a1')).toBe('media/a1.jpg')
+    expect([...(await remote.readFile('media/a1.jpg'))]).toEqual([...photo])
+  })
+
+  test('探测连接也不能因为 409 就报失败', async () => {
+    const fake = createFakeGitHub()
+    const remote = new GitHubRemoteStore({ repo: 'me/data', branch: 'main', token: 't', fetchImpl: fake.fetchImpl })
+
+    const result = await remote.testConnection()
+
+    expect(result.ok).toBe(true)
   })
 })
 

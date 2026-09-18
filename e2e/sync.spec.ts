@@ -79,8 +79,33 @@ test('两台设备连同一个仓库：手机记的账，电脑上能看到（�
   await expect(computer.getByTestId('expense-item')).toHaveCount(1)
   await expect(computer.getByTestId('expense-item')).toContainText('¥128.50')
   await expect(computer.getByTestId('expense-item')).toContainText('手机上买的')
-  // 图片也从云端下回来了
+  // 图片也下回来了 —— 而且必须是「真有内容的图」，不是个空壳
   await expect(computer.getByTestId('attachment-thumb')).toHaveCount(1)
+
+  const storedSizes = await computer.evaluate(async () => {
+    const request = indexedDB.open('cute-ledger')
+    const db: IDBDatabase = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const tx = db.transaction('attachments', 'readonly')
+    const rows: Array<{ blob: Blob }> = await new Promise((resolve, reject) => {
+      const all = tx.objectStore('attachments').getAll()
+      all.onsuccess = () => resolve(all.result as Array<{ blob: Blob }>)
+      all.onerror = () => reject(all.error)
+    })
+    db.close()
+    return rows.map((row) => row.blob.size)
+  })
+  expect(storedSizes).toHaveLength(1)
+  expect(storedSizes[0], '同步过来的图片不能是 0 字节').toBeGreaterThan(0)
+
+  // 浏览器真的把像素画出来了才算数（空 blob 的话 naturalWidth 会是 0）
+  const image = computer.getByTestId('attachment-thumb').locator('img')
+  await expect(image).toBeVisible()
+  await expect
+    .poll(async () => image.evaluate((node: HTMLImageElement) => node.naturalWidth), { timeout: 10000 })
+    .toBeGreaterThan(0)
 
   await phoneContext.close()
   await computerContext.close()

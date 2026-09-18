@@ -6,8 +6,11 @@
  *   GH_TOKEN=$(gh auth token) node scripts/sync-probe.mjs [owner/repo]
  * 默认仓库：qqtang-code/cute-ledger-data
  *
- * 它会往数据仓库写一个 probe.json、再加一个 media/demo.webp，然后删掉 media/demo.webp，
- * 最后把 probe.json 也删掉（仓库回到干净状态，只留一个 state.json 占位）。
+ * ⚠️ 这个脚本会把目标仓库清空（它要测「空仓库怎么建首个提交」这条路径），
+ * 所以它只认**自己的**文件。跑之前先做安全检查，只要看到疑似真实记账数据就拒绝运行。
+ *
+ * 事故记录（2026-09-18）：早期版本没有这个检查，把用户手机同步上来的 state.json 删了。
+ * 数据后来从 git 历史里恢复了，但这个检查必须留着——探针永远不该有机会碰真实数据。
  */
 const API = 'https://api.github.com'
 const TOKEN = process.env.GH_TOKEN
@@ -76,6 +79,56 @@ async function ensureBranch(initialState) {
 /** git 的空树对象：仓库有提交但零文件时，父提交的 tree 就是这个 sha */
 const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 
+/** 探针自己会产生的文件。别的任何东西都视为「不是我的」，一律不动手。 */
+const PROBE_OWNED = new Set(['state.json', 'probe.json', 'media/demo.webp'])
+
+/**
+ * 安全闸门：这个脚本会把仓库清空，所以必须先确认仓库里没有别人的东西。
+ * 判据是「探针自己写过的 state.json 里带 probe 字段」，而真实同步数据里带 expenses/categories。
+ */
+async function assertRepoIsDisposable() {
+  let tree = []
+  try {
+    const listing = await api('GET', `/repos/${REPO}/git/trees/${BRANCH}?recursive=1`)
+    tree = listing.tree ?? []
+  } catch (error) {
+    // 分支不存在 / 零文件时 404，**一次都没提交过时 409**（实测），
+    // 对探针来说都等价于「空仓库」，正是它要测的场景
+    if (!/→ (404|409)\b/.test(error.message)) throw error
+    return
+  }
+
+  const foreign = tree.map((entry) => entry.path).filter((path) => !PROBE_OWNED.has(path))
+  if (foreign.length > 0) {
+    throw new Error(
+      `拒绝运行：${REPO} 里有 ${foreign.length} 个不属于探针的文件（${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? ' …' : ''}）。\n` +
+        '    探针会把仓库清空，只能在一次性仓库上跑：\n' +
+        '      node scripts/sync-probe.mjs <你的账号>/sync-probe-scratch',
+    )
+  }
+
+  const stateFile = tree.find((entry) => entry.path === 'state.json')
+  if (!stateFile) return
+
+  const content = await api('GET', `/repos/${REPO}/contents/state.json?ref=${BRANCH}`)
+  let parsed = null
+  try {
+    parsed = JSON.parse(Buffer.from(content.content, 'base64').toString('utf8'))
+  } catch {
+    parsed = null
+  }
+  const looksLikeRealData =
+    parsed && typeof parsed === 'object' && ('expenses' in parsed || 'categories' in parsed || 'schemaVersion' in parsed)
+  const isProbeOwned = parsed && typeof parsed === 'object' && 'probe' in parsed
+  if (looksLikeRealData || !isProbeOwned) {
+    throw new Error(
+      `拒绝运行：${REPO} 的 state.json 是真实同步数据，不是探针产物。\n` +
+        `    里面是 ${Object.keys(parsed ?? {}).join(', ') || '无法解析的内容'}。\n` +
+        '    探针只能在没有真实数据的仓库上跑：node scripts/sync-probe.mjs <你的账号>/sync-probe-scratch',
+    )
+  }
+}
+
 async function commitFiles(files, message, deletes = []) {
   const ref = await readRef()
   const parentSha = ref?.object?.sha ?? null
@@ -123,13 +176,18 @@ try {
   const repo = await api('GET', `/repos/${REPO}`)
   check('仓库可读且是私有的', repo.private === true, `${repo.full_name} private=${repo.private}`)
 
+  // 先过安全闸门，再落任何一笔写入
+  await assertRepoIsDisposable()
+  check('仓库里没有真实记账数据（探针可以安全清空）', true)
+
   // 第一次提交：空仓库要先靠 Contents API 建立分支
   await ensureBranch(JSON.stringify({ probe: '初始化', at: new Date().toISOString() }))
   const firstSha = (await readRef()).object.sha
   check('空仓库用 Contents API 建立首个提交与分支', typeof firstSha === 'string' && firstSha.length === 40, firstSha.slice(0, 7))
 
   // 第二次提交：带二进制附件 + 走 base_tree + PATCH ref
-  const fakeImage = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 5, 6, 7, 8])
+  // 用 300KB 的伪随机数据，贴近「一张压缩后的照片」的真实大小
+  const fakeImage = new Uint8Array(300 * 1024).map((_, index) => (index * 37 + (index >> 5)) % 251)
   const secondSha = await commitFiles(
     {
       'state.json': JSON.stringify({ probe: '第二次提交', at: new Date().toISOString() }),
@@ -146,7 +204,12 @@ try {
   const blobSha = tree.tree.find((entry) => entry.path === 'media/demo.webp').sha
   const blob = await api('GET', `/repos/${REPO}/git/blobs/${blobSha}`)
   const back = Buffer.from(blob.content, 'base64')
-  check('二进制附件能原样读回来', Buffer.compare(back, Buffer.from(fakeImage)) === 0, `sha=${blobSha.slice(0, 7)} size=${back.length}`)
+  const same = Buffer.compare(back, Buffer.from(fakeImage)) === 0
+  check(
+    `二进制附件能原样读回来（${Math.round(fakeImage.length / 1024)}KB）`,
+    same,
+    `sha=${blobSha.slice(0, 7)} 收到 ${Math.round(back.length / 1024)}KB 逐字节一致=${same}`,
+  )
 
   // 第三次提交：删附件 + 删 probe 文件
   await commitFiles({ 'state.json': JSON.stringify({ probe: 'clean', at: new Date().toISOString() }) }, '探针：收尾', [

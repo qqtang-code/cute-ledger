@@ -39,6 +39,27 @@ export interface RemoteStore {
 const API = 'https://api.github.com'
 const STATE_PATH = 'state.json'
 
+/** 带状态码的错误，调用方要按码分支，不能靠猜文案 */
+export class GitHubHttpError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'GitHubHttpError'
+    this.status = status
+  }
+}
+
+/**
+ * 「仓库是空的」有两种说法，都是实测出来的（在零提交的真仓库上量的）：
+ *   - 一次都没有提交过：/git/ref/heads/x 和 /git/trees/x 都返回 **409** Git Repository is empty
+ *   - 有提交但零文件（git 空树）：/git/trees/x 返回 **404**
+ * 两种都不是故障，调用方一律当成「空」——首次同步就靠这个判断走初始化分支。
+ */
+export function isEmptyRepoError(error: unknown): boolean {
+  return error instanceof GitHubHttpError && (error.status === 404 || error.status === 409)
+}
+
 /**
  * git 的空树对象 sha：仓库有提交但零文件时，父提交的 tree 就是它。
  * 这个对象在服务端并不存在，拿它当 base_tree 会 404（探针实测），所以遇到时要省略 base_tree。
@@ -110,7 +131,7 @@ export class GitHubRemoteStore implements RemoteStore {
       } catch {
         /* 原样用文本 */
       }
-      throw new Error(`GitHub ${method} ${path} 失败（${response.status}）：${detail}`)
+      throw new GitHubHttpError(response.status, `GitHub ${method} ${path} 失败（${response.status}）：${detail}`)
     }
     return text ? JSON.parse(text) : null
   }
@@ -122,7 +143,7 @@ export class GitHubRemoteStore implements RemoteStore {
       }
       return ref.object.sha
     } catch (error) {
-      if (error instanceof Error && error.message.includes('（404）')) return null
+      if (isEmptyRepoError(error)) return null
       throw error
     }
   }
@@ -134,9 +155,8 @@ export class GitHubRemoteStore implements RemoteStore {
       }
       return tree.tree ?? []
     } catch (error) {
-      // 仓库有提交但一个文件都没有时（git 的空树），这个接口返回 404。
-      // 那不是错误，就是「空的」。实测过：连空树的 sha 都取不到。
-      if (error instanceof Error && error.message.includes('（404）')) return []
+      // 409 = 一次都没提交过；404 = 有提交但零文件。两种情况都是「空的」。
+      if (isEmptyRepoError(error)) return []
       throw error
     }
   }
